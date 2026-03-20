@@ -1,48 +1,124 @@
 import { useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Upload, X, FileText, Check, Loader2 } from "lucide-react";
+import { Upload, X, FileText, Check, Loader2, AlertCircle, Sparkles } from "lucide-react";
+import { uploadFile, processData, setState } from "@/data/mockData";
 
 interface UploadModalProps {
   open: boolean;
   onClose: () => void;
 }
 
-interface FileEntry {
-  name: string;
-  type: string;
-  status: "uploading" | "done";
+type FileType = "cdr" | "tower" | "ipdr";
+
+interface FileSlot {
+  endpoint: FileType;
+  label: string;
+  description: string;
+  color: string;
+  accentColor: string;
+  icon: string;
+  file: File | null;
+  status: "idle" | "uploading" | "done" | "error";
+  rows?: number;
+  error?: string;
 }
 
+const INITIAL_SLOTS: FileSlot[] = [
+  {
+    endpoint: "cdr",
+    label: "CDR Data",
+    description: "Call Detail Records (.xlsx)",
+    color: "hsl(187 80% 50%)",
+    accentColor: "hsl(187 80% 50% / 0.12)",
+    icon: "📞",
+    file: null,
+    status: "idle",
+  },
+  {
+    endpoint: "tower",
+    label: "Tower Dump",
+    description: "Cell Tower Logs (.xlsx)",
+    color: "hsl(270 60% 60%)",
+    accentColor: "hsl(270 60% 60% / 0.12)",
+    icon: "🗼",
+    file: null,
+    status: "idle",
+  },
+  {
+    endpoint: "ipdr",
+    label: "IPDR Logs",
+    description: "Internet Protocol Records (.xlsx)",
+    color: "hsl(200 80% 55%)",
+    accentColor: "hsl(200 80% 55% / 0.12)",
+    icon: "🌐",
+    file: null,
+    status: "idle",
+  },
+];
+
 export function UploadModal({ open, onClose }: UploadModalProps) {
-  const [files, setFiles] = useState<FileEntry[]>([]);
+  const [slots, setSlots] = useState<FileSlot[]>(INITIAL_SLOTS);
   const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeError, setAnalyzeError] = useState<string | null>(null);
+  const [analyzeSuccess, setAnalyzeSuccess] = useState(false);
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    addFiles(Array.from(e.dataTransfer.files));
-  }, []);
-
-  const addFiles = (newFiles: File[]) => {
-    const entries: FileEntry[] = newFiles.map((f) => ({
-      name: f.name,
-      type: f.name.includes("cdr") ? "CDR" : f.name.includes("tower") ? "Tower" : "IPDR",
-      status: "uploading" as const,
-    }));
-    setFiles((prev) => [...prev, ...entries]);
-
-    entries.forEach((entry, i) => {
-      setTimeout(() => {
-        setFiles((prev) => prev.map((f) => f.name === entry.name ? { ...f, status: "done" } : f));
-      }, 800 + i * 400);
-    });
+  const updateSlot = (endpoint: FileType, patch: Partial<FileSlot>) => {
+    setSlots(prev => prev.map(s => s.endpoint === endpoint ? { ...s, ...patch } : s));
   };
 
-  const handleAnalyze = () => {
+  const handleFilePick = (endpoint: FileType) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".xlsx,.xls";
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+      updateSlot(endpoint, { file, status: "uploading", error: undefined });
+      try {
+        const result = await uploadFile(endpoint, file);
+        updateSlot(endpoint, { status: "done", rows: result.rows_loaded });
+      } catch (err) {
+        updateSlot(endpoint, { status: "error", error: String(err) });
+      }
+    };
+    input.click();
+  };
+
+  const handleDrop = useCallback((endpoint: FileType, e: React.DragEvent) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+    // trigger same upload path
+    const fakeEvent = { target: { files: [file] } } as unknown as Event;
+    const input = document.createElement("input");
+    const synth = Object.assign(input, { files: [file] });
+    // just call the upload directly
+    updateSlot(endpoint, { file, status: "uploading", error: undefined });
+    uploadFile(endpoint, file)
+      .then(result => updateSlot(endpoint, { status: "done", rows: result.rows_loaded }))
+      .catch(err => updateSlot(endpoint, { status: "error", error: String(err) }));
+  }, []);
+
+  const allDone = slots.filter(s => s.status === "done").length > 0;
+  const cdrDone = slots.find(s => s.endpoint === "cdr")?.status === "done";
+
+  const handleAnalyze = async () => {
+    if (!cdrDone) return;
     setAnalyzing(true);
-    setTimeout(() => {
+    setAnalyzeError(null);
+    try {
+      await processData();
+      setAnalyzeSuccess(true);
+      setTimeout(() => {
+        onClose();
+        setAnalyzeSuccess(false);
+        setSlots(INITIAL_SLOTS);
+      }, 1200);
+    } catch (err) {
+      setAnalyzeError(String(err));
+    } finally {
       setAnalyzing(false);
-      onClose();
-    }, 2000);
+    }
   };
 
   if (!open) return null;
@@ -57,78 +133,136 @@ export function UploadModal({ open, onClose }: UploadModalProps) {
         onClick={onClose}
       >
         <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          exit={{ opacity: 0, scale: 0.95 }}
+          initial={{ opacity: 0, scale: 0.96, y: 12 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.96, y: 12 }}
+          transition={{ type: "spring", damping: 24, stiffness: 320 }}
           onClick={(e) => e.stopPropagation()}
-          className="w-full max-w-md bg-card border border-border rounded-2xl p-6 shadow-2xl"
+          className="w-full max-w-lg bg-card border border-border rounded-2xl shadow-2xl overflow-hidden"
         >
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-foreground">Upload Files</h2>
-            <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
-              <X className="h-5 w-5" />
+          {/* Header */}
+          <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+            <div className="flex items-center gap-2.5">
+              <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center">
+                <Upload className="h-3.5 w-3.5 text-primary" />
+              </div>
+              <div>
+                <h2 className="text-sm font-semibold text-foreground">Upload Forensic Files</h2>
+                <p className="text-xs text-muted-foreground">CDR · Tower Dump · IPDR — Excel format</p>
+              </div>
+            </div>
+            <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded-md hover:bg-secondary">
+              <X className="h-4 w-4" />
             </button>
           </div>
 
-          {/* Drop zone */}
-          <div
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={handleDrop}
-            className="border-2 border-dashed border-border rounded-xl p-8 text-center hover:border-primary/50 transition-colors cursor-pointer"
-            onClick={() => {
-              const input = document.createElement("input");
-              input.type = "file";
-              input.multiple = true;
-              input.onchange = (e) => {
-                const target = e.target as HTMLInputElement;
-                if (target.files) addFiles(Array.from(target.files));
-              };
-              input.click();
-            }}
-          >
-            <Upload className="h-8 w-8 text-muted-foreground mx-auto mb-3" />
-            <p className="text-sm text-muted-foreground">
-              Drop CDR, Tower, or IPDR files here
-            </p>
-            <p className="text-xs text-muted-foreground/60 mt-1">or click to browse</p>
-          </div>
+          {/* File Slots */}
+          <div className="p-6 space-y-3">
+            {slots.map((slot) => (
+              <motion.div
+                key={slot.endpoint}
+                layout
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => handleDrop(slot.endpoint, e)}
+                onClick={() => slot.status !== "uploading" && handleFilePick(slot.endpoint)}
+                style={{
+                  background: slot.status === "done" ? slot.accentColor : "transparent",
+                  borderColor: slot.status === "done" ? slot.color + "60" : "hsl(var(--border))",
+                }}
+                className="flex items-center gap-4 border rounded-xl px-4 py-3.5 cursor-pointer transition-all hover:border-primary/30 hover:bg-secondary/30 group"
+              >
+                {/* Icon */}
+                <div
+                  style={{ background: slot.status === "done" ? slot.color + "20" : "hsl(var(--secondary))" }}
+                  className="w-10 h-10 rounded-lg flex items-center justify-center text-lg shrink-0 transition-colors"
+                >
+                  {slot.icon}
+                </div>
 
-          {/* File list */}
-          {files.length > 0 && (
-            <div className="mt-4 space-y-2">
-              {files.map((file) => (
-                <div key={file.name} className="flex items-center gap-3 px-3 py-2 bg-secondary/50 rounded-lg">
-                  <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-foreground truncate">{file.name}</p>
-                    <p className="text-xs text-muted-foreground">{file.type}</p>
-                  </div>
-                  {file.status === "uploading" ? (
+                {/* Info */}
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-foreground">{slot.label}</p>
+                  <p className="text-xs text-muted-foreground truncate">
+                    {slot.status === "done"
+                      ? `✓ ${slot.rows?.toLocaleString()} rows loaded`
+                      : slot.status === "error"
+                      ? `⚠ ${slot.error?.slice(0, 40)}`
+                      : slot.file
+                      ? slot.file.name
+                      : slot.description}
+                  </p>
+                </div>
+
+                {/* Status */}
+                <div className="shrink-0">
+                  {slot.status === "idle" && (
+                    <span className="text-xs text-muted-foreground border border-border rounded-md px-2 py-1 group-hover:border-primary/40 group-hover:text-primary transition-colors">
+                      Browse
+                    </span>
+                  )}
+                  {slot.status === "uploading" && (
                     <Loader2 className="h-4 w-4 text-primary animate-spin" />
-                  ) : (
-                    <Check className="h-4 w-4 text-risk-low" />
+                  )}
+                  {slot.status === "done" && (
+                    <motion.div
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      style={{ color: slot.color }}
+                    >
+                      <Check className="h-4 w-4" />
+                    </motion.div>
+                  )}
+                  {slot.status === "error" && (
+                    <AlertCircle className="h-4 w-4 text-destructive" />
                   )}
                 </div>
-              ))}
-            </div>
-          )}
+              </motion.div>
+            ))}
+          </div>
 
-          {files.length > 0 && files.every((f) => f.status === "done") && (
+          {/* Rules reminder */}
+          <div className="px-6 pb-4">
+            <div className="bg-secondary/40 rounded-lg p-3 text-xs text-muted-foreground leading-relaxed">
+              <span className="text-foreground font-medium">9 forensic rules active: </span>
+              Late-night calls · Long duration · Weak signal · Dark web · Fraud sites · VPN usage · High data · IMEI swap · Call frequency
+            </div>
+          </div>
+
+          {/* Analyze button */}
+          <div className="px-6 pb-6">
+            {analyzeError && (
+              <p className="text-xs text-destructive mb-3 text-center">{analyzeError}</p>
+            )}
             <button
               onClick={handleAnalyze}
-              disabled={analyzing}
-              className="w-full mt-4 py-2.5 rounded-xl bg-primary text-primary-foreground font-medium text-sm hover:bg-primary/90 disabled:opacity-60 transition-all flex items-center justify-center gap-2"
+              disabled={!cdrDone || analyzing || analyzeSuccess}
+              className="w-full py-3 rounded-xl font-medium text-sm transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{
+                background: analyzeSuccess
+                  ? "hsl(140 60% 45%)"
+                  : "hsl(var(--primary))",
+                color: "hsl(var(--primary-foreground))",
+              }}
             >
-              {analyzing ? (
+              {analyzeSuccess ? (
+                <>
+                  <Check className="h-4 w-4" />
+                  Analysis Complete!
+                </>
+              ) : analyzing ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  Analyzing data...
+                  Merging & Analyzing…
                 </>
               ) : (
-                "Analyze Files"
+                <>
+                  <Sparkles className="h-4 w-4" />
+                  Analyze Files
+                  {!cdrDone && <span className="opacity-60 ml-1">(CDR required)</span>}
+                </>
               )}
             </button>
-          )}
+          </div>
         </motion.div>
       </motion.div>
     </AnimatePresence>

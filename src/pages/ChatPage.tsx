@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Send, Bot, User, Sparkles } from "lucide-react";
-import { getMockResponse, type ChatResponse } from "@/data/mockData";
+import { Send, Bot, User, Sparkles, Database } from "lucide-react";
+import { getAIResponse, getMockResponse, getState, subscribeState, checkStatus, type ChatResponse } from "@/data/mockData";
 
 interface Message {
   id: string;
@@ -12,11 +12,12 @@ interface Message {
 }
 
 const suggestedPrompts = [
+  "Give me an investigation summary",
   "Show suspicious numbers",
-  "Find high-risk activity",
-  "Analyze this number",
-  "Show night call patterns",
-  "Give investigation summary",
+  "Find high-risk call patterns",
+  "Analyze night call activity",
+  "Show IMEI swap detections",
+  "Any dark web or VPN access?",
 ];
 
 function RiskBadge({ label, type }: { label: string; type: string }) {
@@ -34,17 +35,43 @@ function RiskBadge({ label, type }: { label: string; type: string }) {
 }
 
 function MarkdownText({ text }: { text: string }) {
-  // Simple markdown: **bold** and \n
-  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  // Parse ## headers, **bold**, bullet lists, numbered lists
+  const lines = text.split("\n");
   return (
-    <div className="text-sm leading-relaxed whitespace-pre-wrap">
-      {parts.map((part, i) => {
-        if (part.startsWith("**") && part.endsWith("**")) {
-          return <strong key={i} className="text-foreground font-semibold">{part.slice(2, -2)}</strong>;
+    <div className="text-sm leading-relaxed space-y-1">
+      {lines.map((line, i) => {
+        if (line.startsWith("## ")) {
+          return (
+            <p key={i} className="text-xs font-semibold text-primary uppercase tracking-wider mt-3 mb-1">
+              {line.replace(/^## /, "").replace(/^[🔍📊⚠️🗺️📋🧮]\s*/, "")}
+            </p>
+          );
         }
-        return <span key={i}>{part}</span>;
+        if (line.startsWith("- ") || line.startsWith("• ")) {
+          const content = line.replace(/^[-•]\s*/, "");
+          return <p key={i} className="flex gap-2"><span className="text-primary mt-0.5 shrink-0">·</span><InlineMd text={content} /></p>;
+        }
+        if (/^\d+\.\s/.test(line)) {
+          const [num, ...rest] = line.split(". ");
+          return <p key={i} className="flex gap-2"><span className="text-muted-foreground shrink-0 w-4 text-right">{num}.</span><InlineMd text={rest.join(". ")} /></p>;
+        }
+        if (line === "---" || line === "") return <div key={i} className={line === "---" ? "border-t border-border my-2" : "h-1"} />;
+        return <p key={i}><InlineMd text={line} /></p>;
       })}
     </div>
+  );
+}
+
+function InlineMd({ text }: { text: string }) {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  return (
+    <>
+      {parts.map((part, i) =>
+        part.startsWith("**") && part.endsWith("**")
+          ? <strong key={i} className="text-foreground font-semibold">{part.slice(2, -2)}</strong>
+          : <span key={i}>{part}</span>
+      )}
+    </>
   );
 }
 
@@ -52,21 +79,35 @@ export function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
+  const [dataLoaded, setDataLoaded] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Check backend status on mount + subscribe to state changes
+  useEffect(() => {
+    checkStatus();
+    const unsub = subscribeState(() => {
+      setDataLoaded(getState().processed);
+    });
+    return unsub;
+  }, []);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, isTyping]);
 
-  const sendMessage = (text: string) => {
-    if (!text.trim()) return;
+  const sendMessage = async (text: string) => {
+    if (!text.trim() || isTyping) return;
     const userMsg: Message = { id: crypto.randomUUID(), role: "user", content: text, timestamp: new Date() };
-    setMessages((prev) => [...prev, userMsg]);
+    setMessages(prev => [...prev, userMsg]);
     setInput("");
     setIsTyping(true);
 
-    setTimeout(() => {
-      const response = getMockResponse(text);
+    try {
+      // Use real AI if data is processed, fallback to mock otherwise
+      const response = dataLoaded
+        ? await getAIResponse(text)
+        : getMockResponse(text);
+
       const aiMsg: Message = {
         id: crypto.randomUUID(),
         role: "ai",
@@ -74,15 +115,28 @@ export function ChatPage() {
         response,
         timestamp: new Date(),
       };
-      setMessages((prev) => [...prev, aiMsg]);
+      setMessages(prev => [...prev, aiMsg]);
+    } finally {
       setIsTyping(false);
-    }, 1200 + Math.random() * 800);
+    }
   };
 
   const isEmpty = messages.length === 0;
 
   return (
     <div className="flex flex-col h-full">
+      {/* Data status banner */}
+      {dataLoaded && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex items-center gap-2 px-4 py-2 bg-primary/5 border-b border-primary/15 text-xs text-primary"
+        >
+          <Database className="h-3 w-3" />
+          <span>Forensic data loaded — AI is analyzing your real CDR, Tower &amp; IPDR records</span>
+        </motion.div>
+      )}
+
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         {isEmpty ? (
@@ -96,10 +150,15 @@ export function ChatPage() {
                 <Sparkles className="h-8 w-8 text-primary" />
               </div>
               <h1 className="text-2xl font-semibold text-foreground mb-2">AI Forensic Assistant</h1>
-              <p className="text-muted-foreground text-sm mb-8">
+              <p className="text-muted-foreground text-sm mb-2">
                 Analyze telecom forensic data — CDR, Tower Dump, IPDR. Ask anything about your investigation.
               </p>
-              <div className="flex flex-wrap gap-2 justify-center">
+              {!dataLoaded && (
+                <p className="text-xs text-muted-foreground/70 mb-6">
+                  Upload your Excel files via <span className="text-primary">Upload Files</span> for AI-powered real analysis.
+                </p>
+              )}
+              <div className="flex flex-wrap gap-2 justify-center mt-4">
                 {suggestedPrompts.map((prompt) => (
                   <button
                     key={prompt}
@@ -128,7 +187,11 @@ export function ChatPage() {
                       <Bot className="h-4 w-4 text-primary" />
                     </div>
                   )}
-                  <div className={`max-w-[85%] ${msg.role === "user" ? "bg-primary/10 border border-primary/20 rounded-2xl rounded-br-md px-4 py-3" : "space-y-3"}`}>
+
+                  <div className={`max-w-[85%] ${msg.role === "user"
+                    ? "bg-primary/10 border border-primary/20 rounded-2xl rounded-br-md px-4 py-3"
+                    : "space-y-3"}`}
+                  >
                     <MarkdownText text={msg.content} />
 
                     {msg.response?.badges && (
@@ -153,10 +216,10 @@ export function ChatPage() {
                           </thead>
                           <tbody>
                             {msg.response.table.rows.map((row, i) => (
-                              <tr key={i} className="border-t border-border">
+                              <tr key={i} className="border-t border-border hover:bg-secondary/20">
                                 {row.map((cell, j) => (
-                                  <td key={j} className="px-3 py-2 text-sm">
-                                    {cell.includes("%") && parseInt(cell) > 70 ? (
+                                  <td key={j} className="px-3 py-2 text-sm font-mono text-xs">
+                                    {typeof cell === "string" && /^\d+$/.test(cell) && parseInt(cell) >= 70 ? (
                                       <span className="text-risk-high font-semibold">{cell}</span>
                                     ) : (
                                       cell
@@ -169,7 +232,12 @@ export function ChatPage() {
                         </table>
                       </div>
                     )}
+
+                    <p className="text-xs text-muted-foreground/50 mt-1">
+                      {msg.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    </p>
                   </div>
+
                   {msg.role === "user" && (
                     <div className="w-8 h-8 rounded-lg bg-secondary flex items-center justify-center shrink-0 mt-0.5">
                       <User className="h-4 w-4 text-secondary-foreground" />
@@ -180,11 +248,7 @@ export function ChatPage() {
             </AnimatePresence>
 
             {isTyping && (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="flex gap-3"
-              >
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex gap-3">
                 <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
                   <Bot className="h-4 w-4 text-primary" />
                 </div>
@@ -214,7 +278,7 @@ export function ChatPage() {
             <input
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask investigation queries..."
+              placeholder={dataLoaded ? "Ask about your forensic data…" : "Ask investigation queries…"}
               className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
             />
             <button
