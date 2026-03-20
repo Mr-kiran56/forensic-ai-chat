@@ -128,6 +128,21 @@ export async function processData(): Promise<void> {
   });
 }
 
+// Add this at the bottom of mockData.ts
+// Keeps Render free tier awake by pinging every 10 minutes
+function keepAlive() {
+  setInterval(async () => {
+    try {
+      await fetch(`${API_BASE}/health`);
+    } catch { /* ignore */ }
+  }, 10 * 60 * 1000); // 10 minutes
+}
+
+// Start on page load
+if (typeof window !== "undefined") {
+  keepAlive();
+}
+
 export async function checkStatus(): Promise<void> {
   try {
     const r = await fetch(`${API_BASE}/upload/status`);
