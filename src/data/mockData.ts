@@ -1,7 +1,7 @@
 // ─── Real API client — replaces mockData with live backend calls ──────────────
 // Drop this file into src/data/mockData.ts — all existing page imports stay the same.
 
-export const API_BASE = "http://localhost:8000/api";
+export const API_BASE = "https://forensic-ai-chat-2.onrender.com";
 
 // ─── Types (kept identical so pages compile without changes) ──────────────────
 
