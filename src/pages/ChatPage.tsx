@@ -7,21 +7,12 @@ import {
   getState,
   subscribeState,
   checkStatus,
-  processData,
-  setState,
+  setState,        // now exported
   API_BASE,
   type ChatResponse,
 } from "@/data/mockData";
 
-// ── API Base (already exported from mockData) ──────────────────────────────
-// ── Keep Render free tier awake — ping every 10 minutes ───────────────────
-if (typeof window !== "undefined") {
-  setInterval(() => {
-    fetch(`${API_BASE}/health`).catch(() => {});
-  }, 10 * 60 * 1000);
-}
-
-// ── Types ─────────────────────────────────────────────────────────────────
+// ─── Types ──────────────────────────────────────────────────────────────
 interface Message {
   id: string;
   role: "user" | "ai";
@@ -50,7 +41,7 @@ const LOAD_STEPS = [
   "Almost ready…",
 ];
 
-// ── Shared sub-components ─────────────────────────────────────────────────
+// ─── Shared sub‑components ─────────────────────────────────────────────
 
 function RiskBadge({ label, type }: { label: string; type: string }) {
   const styles: Record<string, string> = {
@@ -116,7 +107,7 @@ function MarkdownText({ text }: { text: string }) {
   );
 }
 
-// ── Welcome Screen ────────────────────────────────────────────────────────
+// ─── Welcome Screen ────────────────────────────────────────────────────
 
 function WelcomeScreen({ onDemoLoaded, onSkip }: { onDemoLoaded: () => void; onSkip: () => void }) {
   const [demoLoading, setDemoLoading] = useState(false);
@@ -148,10 +139,10 @@ function WelcomeScreen({ onDemoLoaded, onSkip }: { onDemoLoaded: () => void; onS
     startStepCycle();
 
     try {
-      // Ping to wake up Render
+      // Wake‑up ping (ignored if fails)
       try {
         await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(8000) });
-      } catch { /* ignore */ }
+      } catch { /* still asleep – main call will wait */ }
 
       const res = await fetch(`${API_BASE}/upload/load-demo`, {
         method: "POST",
@@ -169,13 +160,13 @@ function WelcomeScreen({ onDemoLoaded, onSkip }: { onDemoLoaded: () => void; onS
 
       const data = await res.json();
 
-      // Update the global state with the processed summary and other data
-      // This ensures the chat knows data is loaded and can use real AI responses.
+      // Fetch additional analysis data to fully populate the frontend store
       const [susRes, netRes] = await Promise.all([
         fetch(`${API_BASE}/analysis/suspicious?min_score=40&limit=50`).then(r => r.json()).catch(() => ({ records: [] })),
         fetch(`${API_BASE}/network/graph`).then(r => r.json()).catch(() => null),
       ]);
 
+      // Update the global state so the chat knows data is ready
       setState({
         processed: true,
         summary: data.summary,
@@ -190,6 +181,8 @@ function WelcomeScreen({ onDemoLoaded, onSkip }: { onDemoLoaded: () => void; onS
       });
       setDemoLoaded(true);
       stopStepCycle("");
+
+      // Brief delay to show the "loaded" checkmark, then proceed to chat
       setTimeout(() => onDemoLoaded(), 1400);
 
     } catch (e: any) {
@@ -215,7 +208,6 @@ function WelcomeScreen({ onDemoLoaded, onSkip }: { onDemoLoaded: () => void; onS
         transition={{ duration: 0.45 }}
         className="w-full max-w-xl"
       >
-        {/* Header */}
         <div className="flex flex-col items-center mb-8">
           <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mb-4 glow-primary">
             <Sparkles className="h-8 w-8 text-primary" />
@@ -227,7 +219,7 @@ function WelcomeScreen({ onDemoLoaded, onSkip }: { onDemoLoaded: () => void; onS
           </p>
         </div>
 
-        {/* Card 1 — Test Data */}
+        {/* Test Data Card */}
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
@@ -250,7 +242,6 @@ function WelcomeScreen({ onDemoLoaded, onSkip }: { onDemoLoaded: () => void; onS
                 : <Database className="h-5 w-5 text-muted-foreground" />
               }
             </div>
-
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1">
                 <p className="text-sm font-semibold text-foreground">Continue with Test Data</p>
@@ -260,7 +251,6 @@ function WelcomeScreen({ onDemoLoaded, onSkip }: { onDemoLoaded: () => void; onS
                   </span>
                 )}
               </div>
-
               <p className="text-xs text-muted-foreground leading-relaxed mb-3">
                 Instantly load a pre-built forensic dataset — 2,000 CDR records,
                 2,000 Tower Dump logs and 2,000 IPDR sessions across 70 phone numbers
@@ -268,11 +258,7 @@ function WelcomeScreen({ onDemoLoaded, onSkip }: { onDemoLoaded: () => void; onS
               </p>
 
               {demoLoading && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  className="mb-3"
-                >
+                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} className="mb-3">
                   <div className="w-full h-1 bg-secondary rounded-full overflow-hidden mb-2">
                     <motion.div
                       className="h-full bg-primary rounded-full"
@@ -288,11 +274,7 @@ function WelcomeScreen({ onDemoLoaded, onSkip }: { onDemoLoaded: () => void; onS
               )}
 
               {demoStats && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  className="flex gap-5 mb-3"
-                >
+                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} className="flex gap-5 mb-3">
                   {([
                     ["CDR",   demoStats.cdr,   "#3b82f6"],
                     ["Tower", demoStats.tower,  "#8b5cf6"],
@@ -357,7 +339,7 @@ function WelcomeScreen({ onDemoLoaded, onSkip }: { onDemoLoaded: () => void; onS
           </div>
         </motion.div>
 
-        {/* Card 2 — Upload own files */}
+        {/* Upload Your Own Files Card */}
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
@@ -393,7 +375,7 @@ function WelcomeScreen({ onDemoLoaded, onSkip }: { onDemoLoaded: () => void; onS
   );
 }
 
-// ── Main ChatPage ─────────────────────────────────────────────────────────
+// ─── Main ChatPage ─────────────────────────────────────────────────────
 
 export function ChatPage() {
   const [messages,    setMessages]    = useState<Message[]>([]);
@@ -404,19 +386,18 @@ export function ChatPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // Check backend status on mount; update dataLoaded if already processed
     checkStatus().then(() => {
       const cur = getState();
       if (cur.processed) {
         setDataLoaded(true);
-        // Do NOT hide welcome screen automatically
+        // Do NOT hide the welcome screen automatically
       }
     });
 
     const unsub = subscribeState(() => {
       const processed = getState().processed;
       setDataLoaded(processed);
-      // Do NOT hide welcome screen here – only user actions should hide it
+      // Do NOT hide the welcome screen here – only user actions hide it
     });
 
     return unsub;
@@ -440,7 +421,6 @@ export function ChatPage() {
       }]);
     } catch (error) {
       console.error("Chat error:", error);
-      // Fallback to mock response if real AI fails
       const fallback = getMockResponse(text);
       setMessages(prev => [...prev, {
         id: crypto.randomUUID(), role: "ai",
@@ -455,7 +435,6 @@ export function ChatPage() {
 
   return (
     <div className="flex flex-col h-full">
-
       {dataLoaded && (
         <motion.div
           initial={{ opacity: 0, y: -8 }}
@@ -468,7 +447,6 @@ export function ChatPage() {
       )}
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
-
         {showWelcome && isEmpty && (
           <WelcomeScreen
             onDemoLoaded={() => { setShowWelcome(false); setDataLoaded(true); }}
