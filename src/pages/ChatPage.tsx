@@ -11,7 +11,8 @@ import {
   type ChatResponse,
 } from "@/data/mockData";
 
-const API_BASE = "http://localhost:8000/api";
+
+export const API_BASE = "https://forensic-ai-chat-2.onrender.com/api";
 
 interface Message {
   id: string;
