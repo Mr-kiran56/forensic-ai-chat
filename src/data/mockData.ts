@@ -94,7 +94,7 @@ export function subscribeState(fn: () => void) {
   return () => { const i = _listeners.indexOf(fn); if (i > -1) _listeners.splice(i, 1); };
 }
 
-function setState(patch: Partial<ForensicState>) {
+export function setState(patch: Partial<ForensicState>) {
   _state = { ..._state, ...patch };
   _listeners.forEach(fn => fn());
 }
