@@ -400,20 +400,28 @@ export function ChatPage() {
   const [showWelcome, setShowWelcome] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    checkStatus();
+useEffect(() => {
+  checkStatus();
 
-    // Skip welcome immediately if data already loaded (e.g. after page refresh)
-    const cur = getState();
-    if (cur.processed) { setDataLoaded(true); setShowWelcome(false); }
+  // Only update dataLoaded — DO NOT hide welcome here
+  const cur = getState();
+  if (cur.processed) {
+    setDataLoaded(true);
+    // ❌ DO NOT setShowWelcome(false) here
+  }
 
-    const unsub = subscribeState(() => {
-      const processed = getState().processed;
-      setDataLoaded(processed);
-      if (processed) setShowWelcome(false);
-    });
-    return unsub;
-  }, []);
+  const unsub = subscribeState(() => {
+    const processed = getState().processed;
+    setDataLoaded(processed);
+
+    // ✅ Only hide welcome AFTER user action (demo load / upload)
+    if (processed) {
+      setShowWelcome(false);
+    }
+  });
+
+  return unsub;
+}, []);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
