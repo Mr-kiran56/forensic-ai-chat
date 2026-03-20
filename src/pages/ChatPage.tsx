@@ -8,12 +8,12 @@ import {
   subscribeState,
   checkStatus,
   processData,
+  setState,
+  API_BASE,
   type ChatResponse,
 } from "@/data/mockData";
 
-// ── API Base ──────────────────────────────────────────────────────────────
-export const API_BASE = "https://forensic-ai-chat-2.onrender.com/api";
-
+// ── API Base (already exported from mockData) ──────────────────────────────
 // ── Keep Render free tier awake — ping every 10 minutes ───────────────────
 if (typeof window !== "undefined") {
   setInterval(() => {
@@ -39,7 +39,6 @@ const suggestedPrompts = [
   "Any dark web or VPN access?",
 ];
 
-// Cycles on button while waiting for Render to wake + process
 const LOAD_STEPS = [
   "Waking up server…",
   "Connecting to backend…",
@@ -149,12 +148,11 @@ function WelcomeScreen({ onDemoLoaded, onSkip }: { onDemoLoaded: () => void; onS
     startStepCycle();
 
     try {
-      // Silent ping to wake Render — ignore if it fails
+      // Ping to wake up Render
       try {
         await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(8000) });
-      } catch { /* still asleep — main call will wait */ }
+      } catch { /* ignore */ }
 
-      // Main load — 2 minute timeout covers Render cold start
       const res = await fetch(`${API_BASE}/upload/load-demo`, {
         method: "POST",
         signal: AbortSignal.timeout(120_000),
@@ -171,8 +169,19 @@ function WelcomeScreen({ onDemoLoaded, onSkip }: { onDemoLoaded: () => void; onS
 
       const data = await res.json();
 
-      stopStepCycle("Syncing dashboard…");
-      await processData();
+      // Update the global state with the processed summary and other data
+      // This ensures the chat knows data is loaded and can use real AI responses.
+      const [susRes, netRes] = await Promise.all([
+        fetch(`${API_BASE}/analysis/suspicious?min_score=40&limit=50`).then(r => r.json()).catch(() => ({ records: [] })),
+        fetch(`${API_BASE}/network/graph`).then(r => r.json()).catch(() => null),
+      ]);
+
+      setState({
+        processed: true,
+        summary: data.summary,
+        suspicious: susRes.records || [],
+        networkData: netRes,
+      });
 
       setDemoStats({
         cdr:   data.files.cdr_rows,
@@ -230,7 +239,6 @@ function WelcomeScreen({ onDemoLoaded, onSkip }: { onDemoLoaded: () => void; onS
           }`}
         >
           <div className="flex items-start gap-4">
-            {/* Icon */}
             <div className={`w-11 h-11 rounded-lg flex items-center justify-center shrink-0 mt-0.5 transition-colors ${
               demoLoaded  ? "bg-primary/15" :
               demoLoading ? "bg-primary/10" : "bg-secondary"
@@ -259,7 +267,6 @@ function WelcomeScreen({ onDemoLoaded, onSkip }: { onDemoLoaded: () => void; onS
                 and 17 towers in Bangalore, Chennai and Hyderabad. All 9 forensic rules run automatically.
               </p>
 
-              {/* Progress bar while loading */}
               {demoLoading && (
                 <motion.div
                   initial={{ opacity: 0, height: 0 }}
@@ -280,7 +287,6 @@ function WelcomeScreen({ onDemoLoaded, onSkip }: { onDemoLoaded: () => void; onS
                 </motion.div>
               )}
 
-              {/* Stats after load */}
               {demoStats && (
                 <motion.div
                   initial={{ opacity: 0, height: 0 }}
@@ -308,7 +314,6 @@ function WelcomeScreen({ onDemoLoaded, onSkip }: { onDemoLoaded: () => void; onS
                 </motion.div>
               )}
 
-              {/* Pills before load */}
               {!demoStats && !demoLoading && (
                 <div className="flex flex-wrap gap-2 mb-3">
                   {["2,000 CDR records", "2,000 Tower pings", "2,000 IPDR sessions",
@@ -320,7 +325,6 @@ function WelcomeScreen({ onDemoLoaded, onSkip }: { onDemoLoaded: () => void; onS
                 </div>
               )}
 
-              {/* Error */}
               {error && (
                 <motion.p
                   initial={{ opacity: 0 }}
@@ -331,7 +335,6 @@ function WelcomeScreen({ onDemoLoaded, onSkip }: { onDemoLoaded: () => void; onS
                 </motion.p>
               )}
 
-              {/* Action button */}
               <button
                 onClick={handleLoadDemo}
                 disabled={demoLoading || demoLoaded}
@@ -401,18 +404,19 @@ export function ChatPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    checkStatus();
-
-    const cur = getState();
-    if (cur.processed) {
-      setDataLoaded(true);
-      // ✅ Do NOT hide welcome screen automatically
-    }
+    // Check backend status on mount; update dataLoaded if already processed
+    checkStatus().then(() => {
+      const cur = getState();
+      if (cur.processed) {
+        setDataLoaded(true);
+        // Do NOT hide welcome screen automatically
+      }
+    });
 
     const unsub = subscribeState(() => {
       const processed = getState().processed;
       setDataLoaded(processed);
-      // ✅ Do NOT hide welcome screen here
+      // Do NOT hide welcome screen here – only user actions should hide it
     });
 
     return unsub;
@@ -433,6 +437,14 @@ export function ChatPage() {
       setMessages(prev => [...prev, {
         id: crypto.randomUUID(), role: "ai",
         content: response.text, response, timestamp: new Date(),
+      }]);
+    } catch (error) {
+      console.error("Chat error:", error);
+      // Fallback to mock response if real AI fails
+      const fallback = getMockResponse(text);
+      setMessages(prev => [...prev, {
+        id: crypto.randomUUID(), role: "ai",
+        content: fallback.text, response: fallback, timestamp: new Date(),
       }]);
     } finally {
       setIsTyping(false);
